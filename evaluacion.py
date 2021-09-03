@@ -1,25 +1,16 @@
 # -*- coding: utf-8 -*-
 
-
-
-from operator import add
-
 import sys
 
 import nmap
 
 import netifaces
 
-
-
-
-
 # Para reordenar las IPs
 
 from socket import inet_aton
 
 import struct
-
 
 
 # Para el Banner Grabbing
@@ -62,114 +53,93 @@ class EvaluacionContinua(object):
 
     def scan(self):
 
-        list_output = []
-
-
-
+        respuesta = ''
 
         # Iniciamos el Escaner de Puertos
-
         nm = nmap.PortScanner()
+        nm.scan(hosts=self._hosts, arguments='-sV -T4')
 
-        nm.scan(hosts=self._hosts,arguments='-sV -T4')
+        # tomamos la lista de hosts
+        hosts_list = [(x, nm[x]['status']['state']) for x in nm.all_hosts()]
+        hosts_ord = []
 
-	
-        for host in nm.all_hosts():
-            print("==========================================================")
-            print("IP: %s (%s)" % (host, nm[host].hostname()))
-            print("Estado : %s" % nm[host].state())
-            item = {
-            "IP": host,
-            "ESTADO": nm[host].state(),
-            "TCP": [],
-            "UDP": []}
- 
-            for proto in nm[host].all_protocols():
-                print("----------")
-                print("Protocolo : %s" % proto)
-                lport = nm[host][proto].keys()
-                for port in lport:
-                    if (proto == "tcp"):
-                        item["TCP"].append({
-                        "puerto": port,
-                        "banner": self.obtenerBanner(host, port)
-                    })
-                    else:
-                        item["UDP"].append({
-                            "puerto": port,
-                            "banner": self.obtenerBanner(host, port)
-                        })
-            # for by proto
-                    list_output.append(item)
-                
-        return list_output
+        # tomamos solo los que están 'up'
+        for host, status in hosts_list:
+            if status in 'up':
+                hosts_ord.append(host)
 
+        # Los ordenamos con sorted, struct e inet_aton
+        hosts_ord = sorted(hosts_ord, key=lambda ip: struct.unpack("!L", inet_aton(ip))[0])
 
-
-###############OBTENEMOS EL SCANNER##################################
-
-    def obtenerBanner(self,ip_address, puerto):
-
-        # Capturamos el Banner
-
-        try:
-
-            conexion=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-
-            conexion.sendto('GET HTTP/1.1 \r\n'.encode(),(ip_address,puerto))
-
-
-
-            conexion.connect((ip_address,puerto))
-
-            banner = conexion.recv(1024)
-
-            conexion.close()
-
-            return str(banner.decode('utf-8').rstrip('\n')) #quitamos el salto de línea posible
-
-        except:
-
-            return
-
-
-
-
-
-##############PETICION POST#################
-
-    def peticion_post( self ,url, data):
-
-        respuesta=''
-
-        estado='OK'
-
-
-
-        try:
-
-            req = requests.post(url, data=data) # Peticion POST con el JSON
-
-            req.raise_for_status()
-
-        except:
-
-            estado='FAIL'
-
-
-
-        respuesta='Enviando resultados a la url {}. . . .\t [{}]'.format(url, estado)
-
+        # Por cada dispositivo encontrado:
+        for h in hosts_ord:
+            self.jsondata[h] = nm[h]
+            print('IP {}'.format(h)) # Nombramos al dispositivo
+            respuesta = '{}\nIP {}'.format(respuesta, h)
+            print('=======================')
+            respuesta = '{}\n======================='.format(respuesta)
+            host_msg = '{}: '.format(h)
+            protocolos = ['tcp','udp'] # Por cada protocolo que queremos filtrar
+            for proto in protocolos:
+                try:
+                    print('\t{}:'.format(proto.upper()))
+                    if nm[h][proto]:
+                        respuesta = '{}\n\t{}'.format(respuesta,proto.upper())
+                        puertos_cont = 0
+                        for port in nm[h][proto].keys():
+                            if nm[h][proto][port]['state'] == "open": # Si está abierto
+                                puertos_cont += 1
+                                puertos='{}: '.format(port)
+                                #print(puertos)
+                                banner = self.obtenerBanner(h,port) # Captura del Banner
+                                if banner == '' or 'None' in banner or banner == None: # Si no devuelve banner
+                                    banner = '-'
+                                print('\t\t{}:\t{}'.format(port, banner))
+                                respuesta = '{}\n\t\t{}:\t{}'.format(respuesta, port, banner)
+                        if puertos_cont == 0:
+                            print('\t\tSin puertos abiertos')
+                            respuesta = '{}\n\t\tSin puertos abiertos'.format(respuesta)
+                        print('\n\n')
+                except:
+                    pass
+            print('--------------------------------')
+            respuesta = '{}\n--------------------------------'.format(respuesta)
         print(respuesta)
 
 
-
+    def obtenerBanner(self, ip_address, puerto):
+        # Capturamos el Banner
+        try:
+            conexion=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+            #conexion.settimeout(2)
+            conexion.connect((ip_address,puerto))
+            banner = conexion.recv(1024)
+            conexion.close()
+            return str(banner.decode('utf-8').rstrip('\n')) # Devolvemos decodificada para evitar b'' como string y quitamos el salto de línea posible
+            
+            
+            
+        except Exception as e:
+             print (">>> Error de escaneo:", e)
 
 
 
 
 ######### ESCRIBIMOS EN EL JSON#######
 
+
+    def peticion_post(self, url, data):
+        respuesta=''
+        estado='OK'
+
+        try:
+            req = requests.post(url, data=data) # Peticion POST con el JSON
+            req.raise_for_status()
+        except:
+            estado='FAIL'
+
+        respuesta='Enviando resultados a la url {}. . . .\t [{}]'.format(url, estado)
+        print(respuesta)
 
 
     def escribir_json(self, archivo):
@@ -189,15 +159,6 @@ class EvaluacionContinua(object):
         print('Generando fichero {}. . . . [{}]'.format(archivo, estado))
 
 
-
-
-
-
-
-
-
-
-
 if __name__ == '__main__':
 
     def getBitsNetmask(netmask):
@@ -207,8 +168,6 @@ if __name__ == '__main__':
 
 
     if len(sys.argv) > 2:
-
-        #rangoIP = sys.argv[2]
 
         interfaz = sys.argv[2]
 
